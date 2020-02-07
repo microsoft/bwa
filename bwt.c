@@ -31,6 +31,9 @@
 #include <assert.h>
 #include <stdint.h>
 #include <limits.h>
+
+#include <tbb/scalable_allocator.h>
+
 #include "utils.h"
 #include "bwt.h"
 #include "kvec.h"
@@ -39,13 +42,21 @@
 #  include "malloc_wrap.h"
 #endif
 
+bwt_t* (*g_bwt_restore_bwt)(const char *fn) = bwt_restore_bwt;
+void(*g_bwt_restore_sa)(const char *fn, bwt_t *bwt) = bwt_restore_sa;
+
+bwtint_t(*g_bwt_sa)(const bwt_t *bwt, bwtint_t k) = bwt_sa;
+void(*g_bwt_sa_bulk)(const bwt_t *bwt, bwtint_t *indices, bwtint_t *values, bwtint_t count) = bwt_sa_bulk;
+
+bwtintv_v* (*g_bwt_intv_forest)(const bwt_t *bwt, const uint8_t *readData, const int spanStart, const int spanEnd) = bwt_intv_forest;
+
 void bwt_gen_cnt_table(bwt_t *bwt)
 {
 	int i, j;
 	for (i = 0; i != 256; ++i) {
 		uint32_t x = 0;
 		for (j = 0; j != 4; ++j)
-			x |= (((i&3) == j) + ((i>>2&3) == j) + ((i>>4&3) == j) + (i>>6 == j)) << (j<<3);
+			x |= (((i & 3) == j) + ((i >> 2 & 3) == j) + ((i >> 4 & 3) == j) + (i >> 6 == j)) << (j << 3);
 		bwt->cnt_table[i] = x;
 	}
 }
@@ -55,7 +66,7 @@ static inline bwtint_t bwt_invPsi(const bwt_t *bwt, bwtint_t k) // compute inver
 	bwtint_t x = k - (k > bwt->primary);
 	x = bwt_B0(bwt, x);
 	x = bwt->L2[x] + bwt_occ(bwt, k, x);
-	return k == bwt->primary? 0 : x;
+	return k == bwt->primary ? 0 : x;
 }
 
 // bwt->bwt and bwt->occ must be precalculated
@@ -75,11 +86,11 @@ void bwt_cal_sa(bwt_t *bwt, int intv)
 	// calculate SA value
 	isa = 0; sa = bwt->seq_len;
 	for (i = 0; i < bwt->seq_len; ++i) {
-		if (isa % intv == 0) bwt->sa[isa/intv] = sa;
+		if (isa % intv == 0) bwt->sa[isa / intv] = sa;
 		--sa;
 		isa = bwt_invPsi(bwt, isa);
 	}
-	if (isa % intv == 0) bwt->sa[isa/intv] = sa;
+	if (isa % intv == 0) bwt->sa[isa / intv] = sa;
 	bwt->sa[0] = (bwtint_t)-1; // before this line, bwt->sa[0] = bwt->seq_len
 }
 
@@ -92,13 +103,23 @@ bwtint_t bwt_sa(const bwt_t *bwt, bwtint_t k)
 	}
 	/* without setting bwt->sa[0] = -1, the following line should be
 	   changed to (sa + bwt->sa[k/bwt->sa_intv]) % (bwt->seq_len + 1) */
-	return sa + bwt->sa[k/bwt->sa_intv];
+	return sa + bwt->sa[k / bwt->sa_intv];
+}
+
+void bwt_sa_bulk(const bwt_t *bwt, bwtint_t *indices, bwtint_t *values, bwtint_t count)
+{
+	int i;
+	for (i = 0; i < count; i++)
+	{
+		values[i] = bwt_sa(bwt, indices[i]);
+	}
 }
 
 static inline int __occ_aux(uint64_t y, int c)
 {
 	// reduce nucleotide counting to bits counting
-	y = ((c&2)? y : ~y) >> 1 & ((c&1)? y : ~y) & 0x5555555555555555ull;
+	y = ((c & 2) ? y : ~y) >> 1 & ((c & 1) ? y : ~y) & 0x5555555555555555ull;
+
 	// count the number of 1s in y
 	y = (y & 0x3333333333333333ull) + (y >> 2 & 0x3333333333333333ull);
 	return ((y + (y >> 4)) & 0xf0f0f0f0f0f0f0full) * 0x101010101010101ull >> 56;
@@ -109,7 +130,7 @@ bwtint_t bwt_occ(const bwt_t *bwt, bwtint_t k, ubyte_t c)
 	bwtint_t n;
 	uint32_t *p, *end;
 
-	if (k == bwt->seq_len) return bwt->L2[c+1] - bwt->L2[c];
+	if (k == bwt->seq_len) return bwt->L2[c + 1] - bwt->L2[c];
 	if (k == (bwtint_t)(-1)) return 0;
 	k -= (k >= bwt->primary); // because $ is not in bwt
 
@@ -118,12 +139,12 @@ bwtint_t bwt_occ(const bwt_t *bwt, bwtint_t k, ubyte_t c)
 	p += sizeof(bwtint_t); // jump to the start of the first BWT cell
 
 	// calculate Occ up to the last k/32
-	end = p + (((k>>5) - ((k&~OCC_INTV_MASK)>>5))<<1);
-	for (; p < end; p += 2) n += __occ_aux((uint64_t)p[0]<<32 | p[1], c);
+	end = p + (((k >> 5) - ((k&~OCC_INTV_MASK) >> 5)) << 1);
+	for (; p < end; p += 2) n += __occ_aux((uint64_t)p[0] << 32 | p[1], c);
 
 	// calculate Occ
-	n += __occ_aux(((uint64_t)p[0]<<32 | p[1]) & ~((1ull<<((~k&31)<<1)) - 1), c);
-	if (c == 0) n -= ~k&31; // corrected for the masked bits
+	n += __occ_aux(((uint64_t)p[0] << 32 | p[1]) & ~((1ull << ((~k & 31) << 1)) - 1), c);
+	if (c == 0) n -= ~k & 31; // corrected for the masked bits
 
 	return n;
 }
@@ -132,12 +153,13 @@ bwtint_t bwt_occ(const bwt_t *bwt, bwtint_t k, ubyte_t c)
 void bwt_2occ(const bwt_t *bwt, bwtint_t k, bwtint_t l, ubyte_t c, bwtint_t *ok, bwtint_t *ol)
 {
 	bwtint_t _k, _l;
-	_k = (k >= bwt->primary)? k-1 : k;
-	_l = (l >= bwt->primary)? l-1 : l;
-	if (_l/OCC_INTERVAL != _k/OCC_INTERVAL || k == (bwtint_t)(-1) || l == (bwtint_t)(-1)) {
+	_k = (k >= bwt->primary) ? k - 1 : k;
+	_l = (l >= bwt->primary) ? l - 1 : l;
+	if (_l / OCC_INTERVAL != _k / OCC_INTERVAL || k == (bwtint_t)(-1) || l == (bwtint_t)(-1)) {
 		*ok = bwt_occ(bwt, k, c);
 		*ol = bwt_occ(bwt, l, c);
-	} else {
+	}
+	else {
 		bwtint_t m, n, i, j;
 		uint32_t *p;
 		if (k >= bwt->primary) --k;
@@ -146,18 +168,18 @@ void bwt_2occ(const bwt_t *bwt, bwtint_t k, bwtint_t l, ubyte_t c, bwtint_t *ok,
 		p += sizeof(bwtint_t);
 		// calculate *ok
 		j = k >> 5 << 5;
-		for (i = k/OCC_INTERVAL*OCC_INTERVAL; i < j; i += 32, p += 2)
-			n += __occ_aux((uint64_t)p[0]<<32 | p[1], c);
+		for (i = k / OCC_INTERVAL * OCC_INTERVAL; i < j; i += 32, p += 2)
+			n += __occ_aux((uint64_t)p[0] << 32 | p[1], c);
 		m = n;
-		n += __occ_aux(((uint64_t)p[0]<<32 | p[1]) & ~((1ull<<((~k&31)<<1)) - 1), c);
-		if (c == 0) n -= ~k&31; // corrected for the masked bits
+		n += __occ_aux(((uint64_t)p[0] << 32 | p[1]) & ~((1ull << ((~k & 31) << 1)) - 1), c);
+		if (c == 0) n -= ~k & 31; // corrected for the masked bits
 		*ok = n;
 		// calculate *ol
 		j = l >> 5 << 5;
 		for (; i < j; i += 32, p += 2)
-			m += __occ_aux((uint64_t)p[0]<<32 | p[1], c);
-		m += __occ_aux(((uint64_t)p[0]<<32 | p[1]) & ~((1ull<<((~l&31)<<1)) - 1), c);
-		if (c == 0) m -= ~l&31; // corrected for the masked bits
+			m += __occ_aux((uint64_t)p[0] << 32 | p[1], c);
+		m += __occ_aux(((uint64_t)p[0] << 32 | p[1]) & ~((1ull << ((~l & 31) << 1)) - 1), c);
+		if (c == 0) m -= ~l & 31; // corrected for the masked bits
 		*ol = m;
 	}
 }
@@ -178,11 +200,11 @@ void bwt_occ4(const bwt_t *bwt, bwtint_t k, bwtint_t cnt[4])
 	p = bwt_occ_intv(bwt, k);
 	memcpy(cnt, p, 4 * sizeof(bwtint_t));
 	p += sizeof(bwtint_t); // sizeof(bwtint_t) = 4*(sizeof(bwtint_t)/sizeof(uint32_t))
-	end = p + ((k>>4) - ((k&~OCC_INTV_MASK)>>4)); // this is the end point of the following loop
+	end = p + ((k >> 4) - ((k&~OCC_INTV_MASK) >> 4)); // this is the end point of the following loop
 	for (x = 0; p < end; ++p) x += __occ_aux4(bwt, *p);
-	tmp = *p & ~((1U<<((~k&15)<<1)) - 1);
-	x += __occ_aux4(bwt, tmp) - (~k&15);
-	cnt[0] += x&0xff; cnt[1] += x>>8&0xff; cnt[2] += x>>16&0xff; cnt[3] += x>>24;
+	tmp = *p & ~((1U << ((~k & 15) << 1)) - 1);
+	x += __occ_aux4(bwt, tmp) - (~k & 15);
+	cnt[0] += x & 0xff; cnt[1] += x >> 8 & 0xff; cnt[2] += x >> 16 & 0xff; cnt[3] += x >> 24;
 }
 
 // an analogy to bwt_occ4() but more efficient, requiring k <= l
@@ -191,7 +213,7 @@ void bwt_2occ4(const bwt_t *bwt, bwtint_t k, bwtint_t l, bwtint_t cntk[4], bwtin
 	bwtint_t _k, _l;
 	_k = k - (k >= bwt->primary);
 	_l = l - (l >= bwt->primary);
-	if (_l>>OCC_INTV_SHIFT != _k>>OCC_INTV_SHIFT || k == (bwtint_t)(-1) || l == (bwtint_t)(-1)) {
+	if (_l >> OCC_INTV_SHIFT != _k >> OCC_INTV_SHIFT || k == (bwtint_t)(-1) || l == (bwtint_t)(-1)) {
 		bwt_occ4(bwt, k, cntk);
 		bwt_occ4(bwt, l, cntl);
 	} else {
@@ -203,19 +225,19 @@ void bwt_2occ4(const bwt_t *bwt, bwtint_t k, bwtint_t l, bwtint_t cntk[4], bwtin
 		memcpy(cntk, p, 4 * sizeof(bwtint_t));
 		p += sizeof(bwtint_t); // sizeof(bwtint_t) = 4*(sizeof(bwtint_t)/sizeof(uint32_t))
 		// prepare cntk[]
-		endk = p + ((k>>4) - ((k&~OCC_INTV_MASK)>>4));
-		endl = p + ((l>>4) - ((l&~OCC_INTV_MASK)>>4));
+		endk = p + ((k >> 4) - ((k&~OCC_INTV_MASK) >> 4));
+		endl = p + ((l >> 4) - ((l&~OCC_INTV_MASK) >> 4));
 		for (x = 0; p < endk; ++p) x += __occ_aux4(bwt, *p);
 		y = x;
-		tmp = *p & ~((1U<<((~k&15)<<1)) - 1);
-		x += __occ_aux4(bwt, tmp) - (~k&15);
+		tmp = *p & ~((1U << ((~k & 15) << 1)) - 1);
+		x += __occ_aux4(bwt, tmp) - (~k & 15);
 		// calculate cntl[] and finalize cntk[]
 		for (; p < endl; ++p) y += __occ_aux4(bwt, *p);
-		tmp = *p & ~((1U<<((~l&15)<<1)) - 1);
-		y += __occ_aux4(bwt, tmp) - (~l&15);
+		tmp = *p & ~((1U << ((~l & 15) << 1)) - 1);
+		y += __occ_aux4(bwt, tmp) - (~l & 15);
 		memcpy(cntl, cntk, 4 * sizeof(bwtint_t));
-		cntk[0] += x&0xff; cntk[1] += x>>8&0xff; cntk[2] += x>>16&0xff; cntk[3] += x>>24;
-		cntl[0] += y&0xff; cntl[1] += y>>8&0xff; cntl[2] += y>>16&0xff; cntl[3] += y>>24;
+		cntk[0] += x & 0xff; cntk[1] += x >> 8 & 0xff; cntk[2] += x >> 16 & 0xff; cntk[3] += x >> 24;
+		cntl[0] += y & 0xff; cntl[1] += y >> 8 & 0xff; cntl[2] += y >> 16 & 0xff; cntl[3] += y >> 24;
 	}
 }
 
@@ -278,13 +300,14 @@ static void bwt_reverse_intvs(bwtintv_v *p)
 {
 	if (p->n > 1) {
 		int j;
-		for (j = 0; j < p->n>>1; ++j) {
+		for (j = 0; j < p->n >> 1; ++j) {
 			bwtintv_t tmp = p->a[p->n - 1 - j];
 			p->a[p->n - 1 - j] = p->a[j];
 			p->a[j] = tmp;
 		}
 	}
 }
+
 // NOTE: $max_intv is not currently used in BWA-MEM
 int bwt_smem1a(const bwt_t *bwt, int len, const uint8_t *q, int x, int min_intv, uint64_t max_intv, bwtintv_v *mem, bwtintv_v *tmpvec[2])
 {
@@ -378,6 +401,46 @@ int bwt_seed_strategy1(const bwt_t *bwt, int len, const uint8_t *q, int x, int m
 	return len;
 }
 
+// Interval cache at every position 
+bwtintv_v* bwt_intv_forest(const bwt_t* bwt, const uint8_t* readData, const int spanStart, const int spanEnd)
+{
+	int spanSize = spanEnd - spanStart;
+	bwtintv_v* intervalForest = (bwtintv_v*)calloc(spanSize, sizeof(bwtintv_v));
+
+	// the initial interval of a single base
+	bwtintv_t workingInterval, ok[4];
+	for (int spanIndex = spanStart; spanIndex < spanEnd; spanIndex++)
+	{
+		bwt_set_intv(bwt, readData[spanIndex], workingInterval);
+		workingInterval.info = spanIndex + 1;
+
+		kv_push(bwtintv_t, intervalForest[spanIndex - spanStart], workingInterval);
+	}
+
+	// Build the interval forest
+	for (int spanIndex = spanStart; spanIndex < spanEnd; spanIndex++)
+	{
+		bwtintv_v& currentSpan = intervalForest[spanIndex - spanStart];
+
+		workingInterval = currentSpan.a[0];
+
+		for (int intervalStart = spanIndex; intervalStart-- > spanStart;)
+		{
+			bwt_extend(bwt, &workingInterval, ok, 1 /* 1 means go backward */);
+
+			workingInterval = ok[readData[intervalStart]];
+			workingInterval.info = spanIndex + 1;
+
+			if (workingInterval.x[2] < 1)
+				break;
+
+			kv_push(bwtintv_t, currentSpan, workingInterval);
+		}
+	}
+
+	return intervalForest;
+}
+
 /*************************
  * Read/write BWT and SA *
  *************************/
@@ -387,7 +450,7 @@ void bwt_dump_bwt(const char *fn, const bwt_t *bwt)
 	FILE *fp;
 	fp = xopen(fn, "wb");
 	err_fwrite(&bwt->primary, sizeof(bwtint_t), 1, fp);
-	err_fwrite(bwt->L2+1, sizeof(bwtint_t), 4, fp);
+	err_fwrite(bwt->L2 + 1, sizeof(bwtint_t), 4, fp);
 	err_fwrite(bwt->bwt, 4, bwt->bwt_size, fp);
 	err_fflush(fp);
 	err_fclose(fp);
@@ -398,7 +461,7 @@ void bwt_dump_sa(const char *fn, const bwt_t *bwt)
 	FILE *fp;
 	fp = xopen(fn, "wb");
 	err_fwrite(&bwt->primary, sizeof(bwtint_t), 1, fp);
-	err_fwrite(bwt->L2+1, sizeof(bwtint_t), 4, fp);
+	err_fwrite(bwt->L2 + 1, sizeof(bwtint_t), 4, fp);
 	err_fwrite(&bwt->sa_intv, sizeof(bwtint_t), 1, fp);
 	err_fwrite(&bwt->seq_len, sizeof(bwtint_t), 1, fp);
 	err_fwrite(bwt->sa + 1, sizeof(bwtint_t), bwt->n_sa - 1, fp);
@@ -411,8 +474,8 @@ static bwtint_t fread_fix(FILE *fp, bwtint_t size, void *a)
 	const int bufsize = 0x1000000; // 16M block
 	bwtint_t offset = 0;
 	while (size) {
-		int x = bufsize < size? bufsize : size;
-		if ((x = err_fread_noeof(a + offset, 1, x, fp)) == 0) break;
+		int x = bufsize < size ? bufsize : size;
+		if ((x = err_fread_noeof((char *)a + offset, 1, x, fp)) == 0) break;
 		size -= x; offset += x;
 	}
 	return offset;
@@ -433,8 +496,8 @@ void bwt_restore_sa(const char *fn, bwt_t *bwt)
 	xassert(primary == bwt->seq_len, "SA-BWT inconsistency: seq_len is not the same.");
 
 	bwt->n_sa = (bwt->seq_len + bwt->sa_intv) / bwt->sa_intv;
-	bwt->sa = (bwtint_t*)calloc(bwt->n_sa, sizeof(bwtint_t));
-	bwt->sa[0] = -1;
+    bwt->sa = (bwtint_t*)scalable_aligned_malloc(bwt->n_sa * sizeof(bwtint_t), 64);
+    bwt->sa[0] = -1;
 
 	fread_fix(fp, sizeof(bwtint_t) * (bwt->n_sa - 1), bwt->sa + 1);
 	err_fclose(fp);
@@ -445,15 +508,16 @@ bwt_t *bwt_restore_bwt(const char *fn)
 	bwt_t *bwt;
 	FILE *fp;
 
-	bwt = (bwt_t*)calloc(1, sizeof(bwt_t));
-	fp = xopen(fn, "rb");
+    bwt = (bwt_t*)scalable_aligned_malloc(sizeof(bwt_t), 64);
+    fp = xopen(fn, "rb");
 	err_fseek(fp, 0, SEEK_END);
 	bwt->bwt_size = (err_ftell(fp) - sizeof(bwtint_t) * 5) >> 2;
-	bwt->bwt = (uint32_t*)calloc(bwt->bwt_size, 4);
-	err_fseek(fp, 0, SEEK_SET);
+    bwt->bwt = (uint32_t*)scalable_aligned_malloc(bwt->bwt_size * sizeof(uint32_t), 64);
+    err_fseek(fp, 0, SEEK_SET);
 	err_fread_noeof(&bwt->primary, sizeof(bwtint_t), 1, fp);
-	err_fread_noeof(bwt->L2+1, sizeof(bwtint_t), 4, fp);
-	fread_fix(fp, bwt->bwt_size<<2, bwt->bwt);
+	bwt->L2[0] = 0;
+	err_fread_noeof(bwt->L2 + 1, sizeof(bwtint_t), 4, fp);
+	fread_fix(fp, bwt->bwt_size << 2, bwt->bwt);
 	bwt->seq_len = bwt->L2[4];
 	err_fclose(fp);
 	bwt_gen_cnt_table(bwt);
@@ -464,6 +528,6 @@ bwt_t *bwt_restore_bwt(const char *fn)
 void bwt_destroy(bwt_t *bwt)
 {
 	if (bwt == 0) return;
-	free(bwt->sa); free(bwt->bwt);
-	free(bwt);
+    scalable_aligned_free(bwt->sa); scalable_aligned_free(bwt->bwt);
+    scalable_aligned_free(bwt);
 }

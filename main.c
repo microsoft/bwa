@@ -2,6 +2,7 @@
 #include <string.h>
 #include "kstring.h"
 #include "utils.h"
+#include "bwaperf.h"
 
 #ifndef PACKAGE_VERSION
 #define PACKAGE_VERSION "0.7.16a-r1181"
@@ -67,6 +68,11 @@ int main(int argc, char *argv[])
 	for (i = 1; i < argc; ++i) ksprintf(&pg, " %s", argv[i]);
 	bwa_pg = pg.s;
 	if (argc < 2) return usage();
+
+    uint64_t perfOptions = DEFAULT | AVX2;
+	
+	bwaperf_config(perfOptions);
+
 	if (strcmp(argv[1], "fa2pac") == 0) ret = bwa_fa2pac(argc-1, argv+1);
 	else if (strcmp(argv[1], "pac2bwt") == 0) ret = bwa_pac2bwt(argc-1, argv+1);
 	else if (strcmp(argv[1], "bwtupdate") == 0) ret = bwa_bwtupdate(argc-1, argv+1);

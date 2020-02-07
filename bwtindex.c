@@ -28,7 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _MSC_VER
 #include <unistd.h>
+#endif
 #include <time.h>
 #include <zlib.h>
 #include "bntseq.h"
@@ -179,7 +181,7 @@ int bwa_bwtupdate(int argc, char *argv[]) // the "bwtupdate" command
 		fprintf(stderr, "Usage: bwa bwtupdate <the.bwt>\n");
 		return 1;
 	}
-	bwt = bwt_restore_bwt(argv[1]);
+	bwt = g_bwt_restore_bwt(argv[1]);
 	bwt_bwtupdate_core(bwt);
 	bwt_dump_bwt(argv[1], bwt);
 	bwt_destroy(bwt);
@@ -200,7 +202,7 @@ int bwa_bwt2sa(int argc, char *argv[]) // the "bwt2sa" command
 		fprintf(stderr, "Usage: bwa bwt2sa [-i %d] <in.bwt> <out.sa>\n", sa_intv);
 		return 1;
 	}
-	bwt = bwt_restore_bwt(argv[optind]);
+	bwt = g_bwt_restore_bwt(argv[optind]);
 	bwt_cal_sa(bwt, sa_intv);
 	bwt_dump_sa(argv[optind+1], bwt);
 	bwt_destroy(bwt);
@@ -239,7 +241,7 @@ int bwa_index(int argc, char *argv[]) // the "index" command
 		return 1;
 	}
 	if (prefix == 0) {
-		prefix = malloc(strlen(argv[optind]) + 4);
+		prefix = (char *)malloc(strlen(argv[optind]) + 4);
 		strcpy(prefix, argv[optind]);
 		if (is_64) strcat(prefix, ".64");
 	}
@@ -275,7 +277,7 @@ int bwa_idx_build(const char *fa, const char *prefix, int algo_type, int block_s
 		strcpy(str2, prefix); strcat(str2, ".bwt");
 		t = clock();
 		if (bwa_verbose >= 3) fprintf(stderr, "[bwa_index] Construct BWT for the packed sequence...\n");
-		bwt = bwt_pac2bwt(str, algo_type == 3);
+		bwt = bwt_pac2bwt(str, algo_type == BWTALGO_IS);
 		bwt_dump_bwt(str2, bwt);
 		bwt_destroy(bwt);
 		if (bwa_verbose >= 3) fprintf(stderr, "[bwa_index] %.2f seconds elapse.\n", (float)(clock() - t) / CLOCKS_PER_SEC);
@@ -285,7 +287,7 @@ int bwa_idx_build(const char *fa, const char *prefix, int algo_type, int block_s
 		strcpy(str, prefix); strcat(str, ".bwt");
 		t = clock();
 		if (bwa_verbose >= 3) fprintf(stderr, "[bwa_index] Update BWT... ");
-		bwt = bwt_restore_bwt(str);
+		bwt = g_bwt_restore_bwt(str);
 		bwt_bwtupdate_core(bwt);
 		bwt_dump_bwt(str, bwt);
 		bwt_destroy(bwt);
@@ -305,7 +307,7 @@ int bwa_idx_build(const char *fa, const char *prefix, int algo_type, int block_s
 		strcpy(str3, prefix); strcat(str3, ".sa");
 		t = clock();
 		if (bwa_verbose >= 3) fprintf(stderr, "[bwa_index] Construct SA from BWT and Occ... ");
-		bwt = bwt_restore_bwt(str);
+		bwt = g_bwt_restore_bwt(str);
 		bwt_cal_sa(bwt, 32);
 		bwt_dump_sa(str3, bwt);
 		bwt_destroy(bwt);

@@ -27,9 +27,10 @@ different sub-commands: **aln/samse/sampe** for BWA-backtrack,
 
 BWA is released under [Apache 2.0][1]. The latest source code is [freely
 available at github][2]. Released packages can [be downloaded][3] at
-SourceForge. After you acquire the source code, simply use `make` to compile
-and copy the single executable `bwa` to the destination you want. The only
-dependency required to build BWA is [zlib][14].
+SourceForge. After you acquire the source code, install [vcpkg][19] tool
+and set VCPKG_ROOT to the install directory. Install vcpkg packages [zlib][14]
+and [tbb][20]. Use `make` to compile and copy the single executable `bwa`
+to the destination you want.
 
 Since 0.7.11, precompiled binary for x86\_64-linux is available in [bwakit][17].
 In addition to BWA, this self-consistent package also comes with bwa-associated
@@ -171,3 +172,5 @@ run the post-processing script.
 [16]: ftp://ftp.ncbi.nlm.nih.gov/genbank/genomes/Eukaryotes/vertebrates_mammals/Homo_sapiens/GRCh38/seqs_for_alignment_pipelines/
 [17]: http://sourceforge.net/projects/bio-bwa/files/bwakit/
 [18]: https://github.com/lh3/bwa/blob/master/README-alt.md
+[19]: https://github.com/microsoft/vcpkg
+[20]: https://github.com/intel/tbb

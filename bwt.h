@@ -31,6 +31,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef _DEBUG
+#define UNIT_TEST_MEM
+#endif
+
 // requirement: (OCC_INTERVAL%16 == 0); please DO NOT change this line because some part of the code assume OCC_INTERVAL=0x80
 #define OCC_INTV_SHIFT 7
 #define OCC_INTERVAL   (1LL<<OCC_INTV_SHIFT)
@@ -99,7 +103,9 @@ extern "C" {
 
 	bwtint_t bwt_occ(const bwt_t *bwt, bwtint_t k, ubyte_t c);
 	void bwt_occ4(const bwt_t *bwt, bwtint_t k, bwtint_t cnt[4]);
+
 	bwtint_t bwt_sa(const bwt_t *bwt, bwtint_t k);
+	void bwt_sa_bulk(const bwt_t *bwt, bwtint_t *indices, bwtint_t *values, bwtint_t count);
 
 	// more efficient version of bwt_occ/bwt_occ4 for retrieving two close Occ values
 	void bwt_gen_cnt_table(bwt_t *bwt);
@@ -123,6 +129,16 @@ extern "C" {
 
 	int bwt_seed_strategy1(const bwt_t *bwt, int len, const uint8_t *q, int x, int min_len, int max_intv, bwtintv_t *mem);
 
+	int bwt_smemm(bwtintv_v* intervalForest, int spanStart, int spanEnd, int startOffset, int min_intv, bwtintv_v *mem, bwtintv_v *tmpvec[2]);
+    bwtintv_v* bwt_intv_forest(const bwt_t *bwt, const uint8_t *readData, const int spanStart, const int spanEnd);
+
+	extern bwt_t* (*g_bwt_restore_bwt)(const char *fn);
+	extern void (*g_bwt_restore_sa)(const char *fn, bwt_t *bwt);
+
+	extern bwtint_t (*g_bwt_sa)(const bwt_t *bwt, bwtint_t k);
+	extern void (*g_bwt_sa_bulk)(const bwt_t *bwt, bwtint_t *indices, bwtint_t *values, bwtint_t count);
+
+    extern bwtintv_v* (*g_bwt_intv_forest)(const bwt_t *bwt, const uint8_t *readData, const int spanStart, const int spanEnd);
 #ifdef __cplusplus
 }
 #endif

@@ -6,6 +6,10 @@
 #include <limits.h>
 #include <ctype.h>
 #include <math.h>
+
+#include "tbb/tbb.h"
+#include "tbb/scalable_allocator.h"
+
 #include "bwa.h"
 #include "bwamem.h"
 #include "kvec.h"
@@ -18,7 +22,6 @@ extern unsigned char nst_nt4_table[256];
 
 void *kopen(const char *fn, int *_fd);
 int kclose(void *a);
-void kt_pipeline(int n_threads, void *(*func)(void*, int, void*), void *shared_data, int n_steps);
 
 typedef struct {
 	kseq_t *ks, *ks2;
@@ -34,67 +37,6 @@ typedef struct {
 	int n_seqs;
 	bseq1_t *seqs;
 } ktp_data_t;
-
-static void *process(void *shared, int step, void *_data)
-{
-	ktp_aux_t *aux = (ktp_aux_t*)shared;
-	ktp_data_t *data = (ktp_data_t*)_data;
-	int i;
-	if (step == 0) {
-		ktp_data_t *ret;
-		int64_t size = 0;
-		ret = calloc(1, sizeof(ktp_data_t));
-		ret->seqs = bseq_read(aux->actual_chunk_size, &ret->n_seqs, aux->ks, aux->ks2);
-		if (ret->seqs == 0) {
-			free(ret);
-			return 0;
-		}
-		if (!aux->copy_comment)
-			for (i = 0; i < ret->n_seqs; ++i) {
-				free(ret->seqs[i].comment);
-				ret->seqs[i].comment = 0;
-			}
-		for (i = 0; i < ret->n_seqs; ++i) size += ret->seqs[i].l_seq;
-		if (bwa_verbose >= 3)
-			fprintf(stderr, "[M::%s] read %d sequences (%ld bp)...\n", __func__, ret->n_seqs, (long)size);
-		return ret;
-	} else if (step == 1) {
-		const mem_opt_t *opt = aux->opt;
-		const bwaidx_t *idx = aux->idx;
-		if (opt->flag & MEM_F_SMARTPE) {
-			bseq1_t *sep[2];
-			int n_sep[2];
-			mem_opt_t tmp_opt = *opt;
-			bseq_classify(data->n_seqs, data->seqs, n_sep, sep);
-			if (bwa_verbose >= 3)
-				fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_sep[0], n_sep[1]);
-			if (n_sep[0]) {
-				tmp_opt.flag &= ~MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, n_sep[0], sep[0], 0);
-				for (i = 0; i < n_sep[0]; ++i)
-					data->seqs[sep[0][i].id].sam = sep[0][i].sam;
-			}
-			if (n_sep[1]) {
-				tmp_opt.flag |= MEM_F_PE;
-				mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux->n_processed + n_sep[0], n_sep[1], sep[1], aux->pes0);
-				for (i = 0; i < n_sep[1]; ++i)
-					data->seqs[sep[1][i].id].sam = sep[1][i].sam;
-			}
-			free(sep[0]); free(sep[1]);
-		} else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux->n_processed, data->n_seqs, data->seqs, aux->pes0);
-		aux->n_processed += data->n_seqs;
-		return data;
-	} else if (step == 2) {
-		for (i = 0; i < data->n_seqs; ++i) {
-			if (data->seqs[i].sam) err_fputs(data->seqs[i].sam, stdout);
-			free(data->seqs[i].name); free(data->seqs[i].comment);
-			free(data->seqs[i].seq); free(data->seqs[i].qual); free(data->seqs[i].sam);
-		}
-		free(data->seqs); free(data);
-		return 0;
-	}
-	return 0;
-}
 
 static void update_a(mem_opt_t *opt, const mem_opt_t *opt0)
 {
@@ -196,7 +138,7 @@ int main_mem(int argc, char *argv[])
 				FILE *fp;
 				if ((fp = fopen(optarg, "r")) != 0) {
 					char *buf;
-					buf = calloc(1, 0x10000);
+					buf = (char*)calloc(1, 0x10000);
 					while (fgets(buf, 0xffff, fp)) {
 						i = strlen(buf);
 						assert(buf[i-1] == '\n'); // a long line
@@ -355,7 +297,75 @@ int main_mem(int argc, char *argv[])
 	}
 	bwa_print_sam_hdr(aux.idx->bns, hdr_line);
 	aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size * opt->n_threads;
-	kt_pipeline(no_mt_io? 1 : 2, process, &aux, 3);
+
+	tbb::parallel_pipeline(no_mt_io ? 1 : 2,
+
+		tbb::make_filter<void, ktp_data_t*>(
+			tbb::filter::serial,
+			[&](tbb::flow_control& fc)-> ktp_data_t*
+			{
+				ktp_data_t* ret = (ktp_data_t*)calloc(1, sizeof(ktp_data_t));
+				ret->seqs = bseq_read(aux.actual_chunk_size, &ret->n_seqs, aux.ks, aux.ks2);
+				if (ret->seqs == 0) {
+					free(ret);
+					fc.stop();
+					return nullptr;
+				}
+				if (!aux.copy_comment)
+					for (int i = 0; i < ret->n_seqs; ++i) {
+						free(ret->seqs[i].comment);
+						ret->seqs[i].comment = 0;
+					}
+				int64_t size = 0;
+				for (int i = 0; i < ret->n_seqs; ++i) size += ret->seqs[i].l_seq;
+				if (bwa_verbose >= 3)
+					fprintf(stderr, "[M::%s] read %d sequences (%ld bp)...\n", __func__, ret->n_seqs, (long)size);
+				return ret;
+			})&
+
+		tbb::make_filter<ktp_data_t*, ktp_data_t*>(
+			tbb::filter::serial,
+			[&](ktp_data_t* data)-> ktp_data_t*
+			{
+				const mem_opt_t* opt = aux.opt;
+				const bwaidx_t* idx = aux.idx;
+				if (opt->flag & MEM_F_SMARTPE) {
+					bseq1_t* sep[2];
+					int n_sep[2];
+					mem_opt_t tmp_opt = *opt;
+					bseq_classify(data->n_seqs, data->seqs, n_sep, sep);
+					if (bwa_verbose >= 3)
+						fprintf(stderr, "[M::%s] %d single-end sequences; %d paired-end sequences\n", __func__, n_sep[0], n_sep[1]);
+					if (n_sep[0]) {
+						tmp_opt.flag &= ~MEM_F_PE;
+						mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux.n_processed, n_sep[0], sep[0], 0);
+						for (i = 0; i < n_sep[0]; ++i)
+							data->seqs[sep[0][i].id].sam = sep[0][i].sam;
+					}
+					if (n_sep[1]) {
+						tmp_opt.flag |= MEM_F_PE;
+						mem_process_seqs(&tmp_opt, idx->bwt, idx->bns, idx->pac, aux.n_processed + n_sep[0], n_sep[1], sep[1], aux.pes0);
+						for (i = 0; i < n_sep[1]; ++i)
+							data->seqs[sep[1][i].id].sam = sep[1][i].sam;
+					}
+					free(sep[0]); free(sep[1]);
+				}
+				else mem_process_seqs(opt, idx->bwt, idx->bns, idx->pac, aux.n_processed, data->n_seqs, data->seqs, aux.pes0);
+				aux.n_processed += data->n_seqs;
+				return data;	})&
+
+				tbb::make_filter<ktp_data_t*, void>(
+					tbb::filter::serial,
+					[&](ktp_data_t* data)
+					{
+						for (i = 0; i < data->n_seqs; ++i) {
+							if (data->seqs[i].sam) err_fputs(data->seqs[i].sam, stdout);
+							free(data->seqs[i].name); free(data->seqs[i].comment);
+							free(data->seqs[i].seq); free(data->seqs[i].qual); free(data->seqs[i].sam);
+						}
+						free(data->seqs); free(data);
+					}));
+
 	free(hdr_line);
 	free(opt);
 	bwa_idx_destroy(aux.idx);
