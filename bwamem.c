@@ -1306,7 +1306,7 @@ void mem_reorder_primary5(int T, mem_alnreg_v *a)
 // TODO (future plan): group hits into a uint64_t[] array. This will be cleaner and more flexible
 void mem_reg2sam(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, bseq1_t *s, mem_alnreg_v *a, int extra_flag, const mem_aln_t *m)
 {
-	extern char **mem_gen_alt(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, mem_alnreg_v *a, int l_query, const char *query);
+	extern char **mem_gen_alt(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, const mem_alnreg_v *a, int l_query, const char *query);
 	kstring_t str;
 	kvec_t(mem_aln_t) aa;
 	int k, l;
