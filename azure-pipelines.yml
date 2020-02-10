@@ -11,10 +11,10 @@ pool:
 
 steps:
 - script:
-    $(VCPKG_ROOT)/bootstrap-vcpkg.sh
+    ${VCPKG_ROOT}/bootstrap-vcpkg.sh
   displayName: Bootstrap vcpkg
 - script:
-    $(VCPKG_ROOT)/vcpkg install zlib tbb
+    ${VCPKG_ROOT}/vcpkg install zlib tbb
   displayName: vcpkg install dependencies
 - script: |
     make
