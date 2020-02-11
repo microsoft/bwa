@@ -10,12 +10,11 @@ pool:
   vmImage: 'ubuntu-latest'
 
 steps:
-- script:
-    ${VCPKG_ROOT}/bootstrap-vcpkg.sh
-  displayName: Bootstrap vcpkg
-- script:
-    ${VCPKG_ROOT}/vcpkg install zlib tbb
-  displayName: vcpkg install dependencies
+- task: run-vcpkg@0
+  displayName: 'Run vcpkg'
+  inputs:
+    vcpkgArguments: install zlib tbb
+
 - script: |
     make
   displayName: 'make'
