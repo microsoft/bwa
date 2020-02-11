@@ -13,18 +13,9 @@ pool:
   vmImage: 'ubuntu-latest'
 
 steps:
-
 - script: |
-    $(VCPKG_ROOT)/vcpkg install zlib tbb
+    $VCPKG_ROOT/vcpkg install zlib tbb
   displayName: 'Install dependencies'
-- task: run-vcpkg@0
-  displayName: 'Run vcpkg'
-  inputs:
-    vcpkgArguments: zlib tbb
-    # Specify the exact commit id to fetch.
-    vcpkgGitCommitId: $(vcpkgGitRef)
-    # URL to fetch vcpkg from (the official one).
-    vcpkgGitURL: https://github.com/microsoft/vcpkg.git
 
 - script: |
     make
