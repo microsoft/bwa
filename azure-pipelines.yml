@@ -5,6 +5,9 @@
 
 trigger:
 - ms_opt
+variables:
+  # Exact vcpkg's version to fetch, commig id or tag name.
+  vcpkgGitRef: 56a12f6ee9fef0991a25a4c7e0a0b2e843bfe5ad
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -14,6 +17,8 @@ steps:
   displayName: 'Run vcpkg'
   inputs:
     vcpkgArguments: install zlib tbb
+    # Specify the exact commit id to fetch.
+    vcpkgGitCommitId: $(vcpkgGitRef)
 
 - script: |
     make
