@@ -16,9 +16,11 @@ steps:
 - task: run-vcpkg@0
   displayName: 'Run vcpkg'
   inputs:
-    vcpkgArguments: install zlib tbb
+    vcpkgArguments: zlib tbb
     # Specify the exact commit id to fetch.
     vcpkgGitCommitId: $(vcpkgGitRef)
+    # URL to fetch vcpkg from (the official one).
+    vcpkgGitURL: https://github.com/microsoft/vcpkg.git
 
 - script: |
     make
