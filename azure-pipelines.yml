@@ -13,6 +13,10 @@ pool:
   vmImage: 'ubuntu-latest'
 
 steps:
+
+- script: |
+    $(VCPKG_ROOT)/vcpkg install zlib tbb
+  displayName: 'Install dependencies'
 - task: run-vcpkg@0
   displayName: 'Run vcpkg'
   inputs:
