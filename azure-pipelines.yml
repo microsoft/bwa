@@ -1,0 +1,27 @@
+# C/C++ with GCC
+# Build your C/C++ project with GCC using make.
+# Add steps that publish test results, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/apps/c-cpp/gcc
+
+trigger:
+- ms_opt
+variables:
+  # Exact vcpkg's version to fetch, commig id or tag name.
+  vcpkgGitRef: 56a12f6ee9fef0991a25a4c7e0a0b2e843bfe5ad
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: run-vcpkg@0
+  displayName: 'Run vcpkg'
+  inputs:
+    vcpkgArguments: zlib tbb
+    # Specify the exact commit id to fetch.
+    vcpkgGitCommitId: $(vcpkgGitRef)
+    # URL to fetch vcpkg from (the official one).
+    vcpkgGitURL: https://github.com/microsoft/vcpkg.git
+
+- script: |
+    make
+  displayName: 'make'
