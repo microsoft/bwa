@@ -8,7 +8,7 @@ trigger:
 
 variables:
   # Exact vcpkg's version to fetch, commig id or tag name.
-  vcpkgGitRef: '2020.01'
+  vcpkgGitRef: '2020.04'
 
 pool:
   vmImage: 'ubuntu-latest'
