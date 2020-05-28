@@ -9,8 +9,8 @@ AOBJS=		rope.o rle.o bwashm.o bwase.o bwaseqio.o bwtgap.o bwtaln.o bamlite.o \
 			bwtsw2_chain.o fastmap.o bwtsw2_pair.o \
 			bwaperf.o bwt_avx2.o ksw_align_avx2.o ksw_extend_avx2.o
 PROG=		bwa
-INCLUDES=	-I$(RUNVCPKG_VCPKG_ROOT)/installed/x64-linux/include
-LIBS=		-L$(RUNVCPKG_VCPKG_ROOT)/installed/x64-linux/lib -lm -lz -ltbb -ltbbmalloc -lpthread
+INCLUDES=	-Ivcpkg/installed/x64-linux/include
+LIBS=		-Lvcpkg/installed/x64-linux/lib -lm -lz -ltbb -ltbbmalloc -lpthread
 SUBDIRS=	.
 
 ifeq ($(shell uname -s),Linux)

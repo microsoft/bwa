@@ -2,7 +2,13 @@
 ## Getting started
 
 	git clone https://github.com/lh3/bwa.git
-	cd bwa; make
+	cd bwa
+	cd vcpkg
+	./bootstrap-vcpkg.sh
+	./vcpkg install tbb
+	./vcpkg install zlib
+	cd ..
+	make
 	./bwa index ref.fa
 	./bwa mem ref.fa read-se.fq.gz | gzip -3 > aln-se.sam.gz
 	./bwa mem ref.fa read1.fq read2.fq | gzip -3 > aln-pe.sam.gz
@@ -27,9 +33,7 @@ different sub-commands: **aln/samse/sampe** for BWA-backtrack,
 
 BWA is released under [Apache 2.0][1]. The latest source code is [freely
 available at github][2]. Released packages can [be downloaded][3] at
-SourceForge. After you acquire the source code, install [vcpkg][19] tool
-and set environment variable to RUNVCPKG_VCPKG_ROOT to the install directory.
-Install vcpkg packages [zlib][14] and [tbb][20]. Use `make` to compile
+SourceForge. Use `make` to compile
 and copy the single executable `bwa` to the destination you want.
 
 Since 0.7.11, precompiled binary for x86\_64-linux is available in [bwakit][17].
