@@ -743,22 +743,6 @@ int ksw_extend_i16(int qlen, const uint8_t* query, int tlen, const uint8_t* targ
 #endif
         );
 
-#ifdef UNIT_TEST_EXTEND
-        for (int in = 0; in < 16; in++)
-        {
-            int hMax = 0;
-            for (int j = 0; LIKELY(j < qlen); ++j)
-            {
-                size_t dm = 6ull * ((bandStart + in) * qlen + j);
-                if (hMax < pMem[dm + 5]) hMax = pMem[dm + 5];
-            }
-            if (hMax != _mm.m256i_i16[in])
-            {
-                ksw_extend_dump("ksw_extend_i16.csv", pMem, qlen, tlen);
-                assert(hMax == _mm.m256i_i16[in]);
-            }
-        }
-#endif
         __m256i _in = _mm256_set_epi16(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
 
         _mj = _mm256_subs_epi16(_mj, _in);
@@ -1425,11 +1409,15 @@ void compute_band_u8(
 
 __forceinline void update_max_g_i8(__m128i& _max_g, __m128i& _max_ie, const __m128i _gscore, const __m128i _mi, const __m128i _kmask)
 {
-    __m128i _cmp0 = _mm_cmpgt_epi8(_gscore, _max_g);
+    __m128i _cmpg = _mm_cmpeq_epi8(_gscore, _max_g);
 
-    __m128i _cmp1 = _mm_and_si128(
-        _mm_cmpeq_epi8(_gscore, _max_g),
-        _mm_cmpgt_epi8(_mi, _max_ie));
+    __m128i _cmp0 = _mm_andnot_si128(
+        _cmpg,
+        _mm_cmpeq_epi8(_mm_max_epu8(_gscore, _max_g), _gscore));
+
+    __m128i _cmp1 = _mm_andnot_si128(
+        _mm_cmpeq_epi8(_mm_max_epu8(_mi, _max_ie), _max_ie),
+        _cmpg);
 
     __m128i _cmp = _mm_and_si128(
         _mm_or_si128(_cmp0, _cmp1),
@@ -1448,15 +1436,23 @@ __forceinline void update_max_g_i8(__m128i& _max_g, __m128i& _max_ie, const __m1
 
 __forceinline void update_max_ij_i8(__m128i& _max_score, __m128i& _max_i, __m128i& _max_j, const __m128i _mm, const __m128i _mi, const __m128i _mj, const __m128i _kmask)
 {
-    __m128i _cmp0 = _mm_cmpgt_epi8(_mm, _max_score);
+    __m128i _cmpm = _mm_cmpeq_epi8(_mm, _max_score);
+
+    __m128i _cmpi = _mm_cmpeq_epi8(_max_i, _mi);
+
+    __m128i _cmp0 = _mm_andnot_si128(
+        _cmpm,
+        _mm_cmpeq_epi8(_mm_max_epu8(_mm, _max_score), _mm));
 
     __m128i _cmp1 = _mm_and_si128(
+        _cmpm,
         _mm_or_si128(
-            _mm_cmpgt_epi8(_max_i, _mi),
-            _mm_and_si128(
-                _mm_cmpeq_epi8(_max_i, _mi),
-                _mm_cmpgt_epi8(_mj, _max_j))),
-        _mm_cmpeq_epi8(_mm, _max_score));
+            _mm_andnot_si128(
+                _cmpi,
+                _mm_cmpeq_epi8(_mm_max_epu8(_max_i, _mi), _max_i)),
+            _mm_andnot_si128(
+                _mm_cmpeq_epi8(_mm_max_epu8(_mj, _max_j), _max_j),
+                _cmpi)));
 
     __m128i _cmp = _mm_and_si128(
         _mm_or_si128(_cmp0, _cmp1),
@@ -1578,7 +1574,7 @@ int ksw_extend_u8(int qlen, const uint8_t* query, int tlen, const uint8_t* targe
             31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
             15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
 
-        _mj = _mm256_subs_epi8(_mj, _in);
+        _mj = _mm256_subs_epu8(_mj, _in);
         __m256i _mi = _mm256_add_epi8(_mm256_set1_epi8(bandStart), _in);
 
         __m256i _tlen = _mm256_set1_epi8(tlen);
@@ -1588,40 +1584,36 @@ int ksw_extend_u8(int qlen, const uint8_t* query, int tlen, const uint8_t* targe
         _mm = _mm256_andnot_si256(_cmask, _mm);
 
         // First zero element should be in the mask
-        __m256i _mmask256 = _mm256_cmpgt_epi8(
+        __m256i _mmask256 = _mm256_cmpeq_epi8(
             _mm,
             _mm256_setzero_si256());
 
-        const __m256i _true = _mm256_set1_epi8(-1);
-
-        _mmask256 = _mm256_shift_left_si256<1>(
-            _mmask256, _true);
+        _mmask256 = _mm256_shift_left_si256<1>(_mmask256);
 
         // Parallel scan
-        _mmask256 = _mm256_and_si256(
+        _mmask256 = _mm256_or_si256(
             _mmask256,
-            _mm256_shift_left_si256<1>(
-                _mmask256, _true));
+            _mm256_shift_left_si256<1>(_mmask256));
 
-        _mmask256 = _mm256_and_si256(
+        _mmask256 = _mm256_or_si256(
             _mmask256,
-            _mm256_shift_left_si256<2>(
-                _mmask256, _true));
+            _mm256_shift_left_si256<2>(_mmask256));
 
-        _mmask256 = _mm256_and_si256(
+        _mmask256 = _mm256_or_si256(
             _mmask256,
-            _mm256_shift_left_si256<4>(
-                _mmask256, _true));
+            _mm256_shift_left_si256<4>(_mmask256));
 
-        _mmask256 = _mm256_and_si256(
+        _mmask256 = _mm256_or_si256(
             _mmask256,
-            _mm256_shift_left_si256<8>(
-                _mmask256, _true));
+            _mm256_shift_left_si256<8>(_mmask256));
 
-        _mmask256 = _mm256_and_si256(
+        _mmask256 = _mm256_or_si256(
             _mmask256,
-            _mm256_shift_left_si256<16>(
-                _mmask256, _true));
+            _mm256_shift_left_si256<16>(_mmask256));
+
+        _mmask256 = _mm256_xor_si256(
+            _mmask256,
+            _mm256_set1_epi8(-1));
 
         _mmask256 = _mm256_andnot_si256(_cmask, _mmask256);
 
