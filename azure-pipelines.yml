@@ -6,22 +6,21 @@
 trigger:
 - ms_opt
 
-variables:
-  # Exact vcpkg's version to fetch, commig id or tag name.
-  vcpkgGitRef: '2020.04'
-
 pool:
   vmImage: 'ubuntu-latest'
 
 steps:
-- task: run-vcpkg@0
-  displayName: 'Run vcpkg'
+- checkout: self  # self represents the repo where the initial Pipelines YAML file was found
+  submodules: true
+- task: ShellScript@2
   inputs:
-    vcpkgArguments: zlib tbb
-    # Specify the exact commit id to fetch.
-    vcpkgGitCommitId: $(vcpkgGitRef)
-    # URL to fetch vcpkg from (the official one).
-    vcpkgGitURL: https://github.com/microsoft/vcpkg.git
+    scriptPath: ./vcpkg/bootstrap-vcpkg.sh
+
+- script: ./vcpkg/vcpkg install tbb
+  displayName: 'Install TBB'
+
+- script: ./vcpkg/vcpkg install zlib
+  displayName: 'Install Zlib'
 
 - script: |
     make
