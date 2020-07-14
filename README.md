@@ -1,7 +1,7 @@
 [![Build Status](https://travis-ci.org/lh3/bwa.svg?branch=dev)](https://travis-ci.org/lh3/bwa)
 ## Getting started
 
-	git clone https://github.com/lh3/bwa.git
+	git clone --recursive -b ms_opt https://github.com/microsoft/bwa 
 	cd bwa
 	cd vcpkg
 	./bootstrap-vcpkg.sh
